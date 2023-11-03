@@ -8,11 +8,11 @@ import tinycudann as tcnn
 from activation import trunc_exp
 from .renderer import NeRFRenderer
 
+from ..wire import models
+
 
 class NeRFNetwork(NeRFRenderer):
     def __init__(self,
-                 encoding="HashGrid",
-                 encoding_dir="SphericalHarmonics",
                  num_layers=2,
                  hidden_dim=64,
                  geo_feat_dim=15,
@@ -30,55 +30,61 @@ class NeRFNetwork(NeRFRenderer):
 
         per_level_scale = np.exp2(np.log2(2048 * bound / 16) / (16 - 1))
 
-        self.encoder = tcnn.Encoding(
-            n_input_dims=3,
-            encoding_config={
-                "otype": "HashGrid",
-                "n_levels": 16,
-                "n_features_per_level": 2,
-                "log2_hashmap_size": 19,
-                "base_resolution": 16,
-                "per_level_scale": per_level_scale,
-            },
-        )
+        # self.sigma_net = tcnn.Network(
+        #     n_input_dims=32,
+        #     n_output_dims=1 + self.geo_feat_dim,
+        #     network_config={
+        #         "otype": "FullyFusedMLP",
+        #         "activation": "ReLU",
+        #         "output_activation": "None",
+        #         "n_neurons": hidden_dim,
+        #         "n_hidden_layers": num_layers - 1,
+        #     },
+        # )
 
-        self.sigma_net = tcnn.Network(
-            n_input_dims=32,
-            n_output_dims=1 + self.geo_feat_dim,
-            network_config={
-                "otype": "FullyFusedMLP",
-                "activation": "ReLU",
-                "output_activation": "None",
-                "n_neurons": hidden_dim,
-                "n_hidden_layers": num_layers - 1,
-            },
+        self.sigma_net = models.get_INR(
+            nonlin="wire2d",
+            in_features=32,
+            out_features=1 + self.geo_feat_dim,
+            hidden_features=hidden_dim,
+            hidden_layers=num_layers - 1,
+            first_omega_0=10.0,
+            hidden_omega_0=10.0,
+            scale=10.0,
+            pos_encode=False,
+            sidelength=100,
         )
 
         # color network
         self.num_layers_color = num_layers_color        
         self.hidden_dim_color = hidden_dim_color
 
-        self.encoder_dir = tcnn.Encoding(
-            n_input_dims=3,
-            encoding_config={
-                "otype": "SphericalHarmonics",
-                "degree": 4,
-            },
-        )
-
         self.in_dim_color = self.encoder_dir.n_output_dims + self.geo_feat_dim
 
-        self.color_net = tcnn.Network(
-            n_input_dims=self.in_dim_color,
-            n_output_dims=3,
-            network_config={
-                "otype": "FullyFusedMLP",
-                "activation": "ReLU",
-                "output_activation": "None",
-                "n_neurons": hidden_dim_color,
-                "n_hidden_layers": num_layers_color - 1,
-            },
+        self.color_net = models.get_INR(
+            nonlin="wire2d",
+            in_features=self.in_dim_color,
+            out_features=3,
+            hidden_features=hidden_dim_color,
+            hidden_layers=num_layers_color - 1,
+            first_omega_0=10.0,
+            hidden_omega_0=10.0,
+            scale=10.0,
+            pos_encode=False,
+            sidelength=100,
         )
+
+        # self.color_net = tcnn.Network(
+        #     n_input_dims=self.in_dim_color,
+        #     n_output_dims=3,
+        #     network_config={
+        #         "otype": "FullyFusedMLP",
+        #         "activation": "ReLU",
+        #         "output_activation": "None",
+        #         "n_neurons": hidden_dim_color,
+        #         "n_hidden_layers": num_layers_color - 1,
+        #     },
+        # )
 
     
     def forward(self, x, d):
