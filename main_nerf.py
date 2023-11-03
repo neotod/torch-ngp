@@ -1,3 +1,4 @@
+import time
 import torch
 import argparse
 
@@ -5,8 +6,12 @@ from nerf.provider import NeRFDataset
 from nerf.gui import NeRFGUI
 from nerf.utils import *
 
+from dotenv import load_dotenv
+
 from functools import partial
 from loss import huber_loss
+
+load_dotenv()
 
 #torch.autograd.set_detect_anomaly(True)
 
@@ -157,4 +162,7 @@ if __name__ == '__main__':
             
             trainer.test(test_loader, write_video=True) # test and save video
             
-            trainer.save_mesh(resolution=256, threshold=10)
+            save_path = os.path.join(
+                os.getenv("RESULTS_SAVING_PATH"), f'wire_nerf_result_{time.time()}.ply'
+            )
+            trainer.save_mesh(save_path=save_path, resolution=256, threshold=10)
