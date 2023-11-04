@@ -162,7 +162,14 @@ if __name__ == '__main__':
             
             trainer.test(test_loader, write_video=True) # test and save video
             
-            save_path = os.path.join(
-                os.getenv("RESULTS_SAVING_PATH"), f'wire_nerf_result_{time.time()}.ply'
+            
+            result_save_path = os.path.join(
+                os.getenv("RESULTS_SAVE_PATH"), f'wire_nerf_result_{time.time()}.ply'
             )
-            trainer.save_mesh(save_path=save_path, resolution=256, threshold=10)
+            trainer.save_mesh(save_path=result_save_path, resolution=256, threshold=10)
+
+
+            model_save_path = os.path.join(
+                os.getenv("MODEL_SAVE_PATH"), f'wire_nerf.pth'
+            )
+            torch.save(model.state_dict(), model_save_path)
