@@ -1,15 +1,15 @@
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 
 from encoding import get_encoder
 from activation import trunc_exp
 from .renderer import NeRFRenderer
+from wire import models
 
 
 class NeRFNetwork(NeRFRenderer):
     def __init__(self,
-                 encoding="hashgrid",
+                 nonlin,
                  encoding_dir="sphere_harmonics",
                  encoding_bg="hashgrid",
                  num_layers=2,
@@ -20,6 +20,7 @@ class NeRFNetwork(NeRFRenderer):
                  num_layers_bg=2,
                  hidden_dim_bg=64,
                  bound=1,
+                 encoding=None, # this is just for compatibility reasons
                  **kwargs,
                  ):
         super().__init__(bound, **kwargs)
@@ -28,68 +29,64 @@ class NeRFNetwork(NeRFRenderer):
         self.num_layers = num_layers
         self.hidden_dim = hidden_dim
         self.geo_feat_dim = geo_feat_dim
-        self.encoder, self.in_dim = get_encoder(encoding, desired_resolution=2048 * bound)
 
-        sigma_net = []
-        for l in range(num_layers):
-            if l == 0:
-                in_dim = self.in_dim
-            else:
-                in_dim = hidden_dim
-            
-            if l == num_layers - 1:
-                out_dim = 1 + self.geo_feat_dim # 1 sigma + 15 SH features for color
-            else:
-                out_dim = hidden_dim
-            
-            sigma_net.append(nn.Linear(in_dim, out_dim, bias=False))
+        # in_dim = self.in_dim
 
-        self.sigma_net = nn.ModuleList(sigma_net)
+        self.sigma_net = models.get_INR(
+            nonlin=nonlin,
+            in_features=32,
+            out_features=1 + self.geo_feat_dim,
+            hidden_features=hidden_dim,
+            hidden_layers=num_layers - 1,
+            first_omega_0=10.0,
+            hidden_omega_0=10.0,
+            scale=10.0,
+            pos_encode=False,
+            sidelength=100,
+        )
 
         # color network
         self.num_layers_color = num_layers_color        
         self.hidden_dim_color = hidden_dim_color
         self.encoder_dir, self.in_dim_dir = get_encoder(encoding_dir)
-        
-        color_net =  []
-        for l in range(num_layers_color):
-            if l == 0:
-                in_dim = self.in_dim_dir + self.geo_feat_dim
-            else:
-                in_dim = hidden_dim_color
-            
-            if l == num_layers_color - 1:
-                out_dim = 3 # 3 rgb
-            else:
-                out_dim = hidden_dim_color
-            
-            color_net.append(nn.Linear(in_dim, out_dim, bias=False))
 
-        self.color_net = nn.ModuleList(color_net)
+        self.in_dim_color = self.encoder_dir.n_output_dims + self.geo_feat_dim
+        self.color_net = models.get_INR(
+            nonlin=nonlin,
+            in_features=self.in_dim_color,
+            out_features=3,
+            hidden_features=hidden_dim_color,
+            hidden_layers=num_layers_color - 1,
+            first_omega_0=10.0,
+            hidden_omega_0=10.0,
+            scale=10.0,
+            pos_encode=False,
+            sidelength=100,
+        )
 
         # background network
-        if self.bg_radius > 0:
-            self.num_layers_bg = num_layers_bg        
-            self.hidden_dim_bg = hidden_dim_bg
-            self.encoder_bg, self.in_dim_bg = get_encoder(encoding_bg, input_dim=2, num_levels=4, log2_hashmap_size=19, desired_resolution=2048) # much smaller hashgrid 
+        # if self.bg_radius > 0:
+        #     self.num_layers_bg = num_layers_bg        
+        #     self.hidden_dim_bg = hidden_dim_bg
+        #     self.encoder_bg, self.in_dim_bg = get_encoder(encoding_bg, input_dim=2, num_levels=4, log2_hashmap_size=19, desired_resolution=2048) # much smaller hashgrid 
             
-            bg_net = []
-            for l in range(num_layers_bg):
-                if l == 0:
-                    in_dim = self.in_dim_bg + self.in_dim_dir
-                else:
-                    in_dim = hidden_dim_bg
+        #     bg_net = []
+        #     for l in range(num_layers_bg):
+        #         if l == 0:
+        #             in_dim = self.in_dim_bg + self.in_dim_dir
+        #         else:
+        #             in_dim = hidden_dim_bg
                 
-                if l == num_layers_bg - 1:
-                    out_dim = 3 # 3 rgb
-                else:
-                    out_dim = hidden_dim_bg
+        #         if l == num_layers_bg - 1:
+        #             out_dim = 3 # 3 rgb
+        #         else:
+        #             out_dim = hidden_dim_bg
                 
-                bg_net.append(nn.Linear(in_dim, out_dim, bias=False))
+        #         bg_net.append(nn.Linear(in_dim, out_dim, bias=False))
 
-            self.bg_net = nn.ModuleList(bg_net)
-        else:
-            self.bg_net = None
+        #     self.bg_net = nn.ModuleList(bg_net)
+        # else:
+        #     self.bg_net = None
 
 
     def forward(self, x, d):

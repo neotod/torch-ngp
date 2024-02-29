@@ -8,19 +8,22 @@ import tinycudann as tcnn
 from activation import trunc_exp
 from .renderer import NeRFRenderer
 
-from ..wire import models
+from wire import models
 
 
 class NeRFNetwork(NeRFRenderer):
-    def __init__(self,
-                 num_layers=2,
-                 hidden_dim=64,
-                 geo_feat_dim=15,
-                 num_layers_color=3,
-                 hidden_dim_color=64,
-                 bound=1,
-                 **kwargs
-                 ):
+    def __init__(
+        self,
+        nonlin,
+        num_layers=2,
+        hidden_dim=64,
+        geo_feat_dim=15,
+        num_layers_color=3,
+        hidden_dim_color=64,
+        bound=1,
+        encoding=None,
+        **kwargs
+    ):
         super().__init__(bound, **kwargs)
 
         # sigma network
@@ -43,7 +46,7 @@ class NeRFNetwork(NeRFRenderer):
         # )
 
         self.sigma_net = models.get_INR(
-            nonlin="wire2d",
+            nonlin=nonlin,
             in_features=32,
             out_features=1 + self.geo_feat_dim,
             hidden_features=hidden_dim,
@@ -56,13 +59,14 @@ class NeRFNetwork(NeRFRenderer):
         )
 
         # color network
-        self.num_layers_color = num_layers_color        
+        self.num_layers_color = num_layers_color
         self.hidden_dim_color = hidden_dim_color
 
-        self.in_dim_color = self.encoder_dir.n_output_dims + self.geo_feat_dim
+        # self.in_dim_color = self.encoder_dir.n_output_dims + self.geo_feat_dim
+        self.in_dim_color = self.geo_feat_dim
 
         self.color_net = models.get_INR(
-            nonlin="wire2d",
+            nonlin=nonlin,
             in_features=self.in_dim_color,
             out_features=3,
             hidden_features=hidden_dim_color,
@@ -86,29 +90,27 @@ class NeRFNetwork(NeRFRenderer):
         #     },
         # )
 
-    
     def forward(self, x, d):
         # x: [N, 3], in [-bound, bound]
         # d: [N, 3], nomalized in [-1, 1]
 
-
         # sigma
-        x = (x + self.bound) / (2 * self.bound) # to [0, 1]
-        x = self.encoder(x)
+        x = (x + self.bound) / (2 * self.bound)  # to [0, 1]
+        # x = self.encoder(x)
         h = self.sigma_net(x)
 
-        #sigma = F.relu(h[..., 0])
+        # sigma = F.relu(h[..., 0])
         sigma = trunc_exp(h[..., 0])
         geo_feat = h[..., 1:]
 
         # color
-        d = (d + 1) / 2 # tcnn SH encoding requires inputs to be in [0, 1]
+        d = (d + 1) / 2  # tcnn SH encoding requires inputs to be in [0, 1]
         d = self.encoder_dir(d)
 
-        #p = torch.zeros_like(geo_feat[..., :1]) # manual input padding
+        # p = torch.zeros_like(geo_feat[..., :1]) # manual input padding
         h = torch.cat([d, geo_feat], dim=-1)
         h = self.color_net(h)
-        
+
         # sigmoid activation for rgb
         color = torch.sigmoid(h)
 
@@ -117,17 +119,17 @@ class NeRFNetwork(NeRFRenderer):
     def density(self, x):
         # x: [N, 3], in [-bound, bound]
 
-        x = (x + self.bound) / (2 * self.bound) # to [0, 1]
-        x = self.encoder(x)
-        h = self.sigma_net(x)
+        x = (x + self.bound) / (2 * self.bound)  # to [0, 1]
+        # x = self.encoder(x)
+        h = self.sigma_net(x) 
 
-        #sigma = F.relu(h[..., 0])
+        # sigma = F.relu(h[..., 0])
         sigma = trunc_exp(h[..., 0])
         geo_feat = h[..., 1:]
 
         return {
-            'sigma': sigma,
-            'geo_feat': geo_feat,
+            "sigma": sigma,
+            "geo_feat": geo_feat,
         }
 
     # allow masked inference
@@ -135,10 +137,12 @@ class NeRFNetwork(NeRFRenderer):
         # x: [N, 3] in [-bound, bound]
         # mask: [N,], bool, indicates where we actually needs to compute rgb.
 
-        x = (x + self.bound) / (2 * self.bound) # to [0, 1]
+        x = (x + self.bound) / (2 * self.bound)  # to [0, 1]
 
         if mask is not None:
-            rgbs = torch.zeros(mask.shape[0], 3, dtype=x.dtype, device=x.device) # [N, 3]
+            rgbs = torch.zeros(
+                mask.shape[0], 3, dtype=x.dtype, device=x.device
+            )  # [N, 3]
             # in case of empty mask
             if not mask.any():
                 return rgbs
@@ -147,33 +151,32 @@ class NeRFNetwork(NeRFRenderer):
             geo_feat = geo_feat[mask]
 
         # color
-        d = (d + 1) / 2 # tcnn SH encoding requires inputs to be in [0, 1]
+        d = (d + 1) / 2  # tcnn SH encoding requires inputs to be in [0, 1]
         d = self.encoder_dir(d)
 
         h = torch.cat([d, geo_feat], dim=-1)
         h = self.color_net(h)
-        
+
         # sigmoid activation for rgb
         h = torch.sigmoid(h)
 
         if mask is not None:
-            rgbs[mask] = h.to(rgbs.dtype) # fp16 --> fp32
+            rgbs[mask] = h.to(rgbs.dtype)  # fp16 --> fp32
         else:
             rgbs = h
 
-        return rgbs        
+        return rgbs
 
     # optimizer utils
     def get_params(self, lr):
-
         params = [
-            {'params': self.encoder.parameters(), 'lr': lr},
-            {'params': self.sigma_net.parameters(), 'lr': lr},
-            {'params': self.encoder_dir.parameters(), 'lr': lr},
-            {'params': self.color_net.parameters(), 'lr': lr}, 
+            # {"params": self.encoder.parameters(), "lr": lr},
+            {"params": self.sigma_net.parameters(), "lr": lr},
+            # {"params": self.encoder_dir.parameters(), "lr": lr},
+            {"params": self.color_net.parameters(), "lr": lr},
         ]
-        if self.bg_radius > 0:
-            params.append({'params': self.encoder_bg.parameters(), 'lr': lr})
-            params.append({'params': self.bg_net.parameters(), 'lr': lr})
-        
+        # if self.bg_radius > 0:
+        #     params.append({"params": self.encoder_bg.parameters(), "lr": lr})
+        #     params.append({"params": self.bg_net.parameters(), "lr": lr})
+
         return params
