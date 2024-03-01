@@ -6,9 +6,12 @@ from encoding import get_encoder
 from activation import trunc_exp
 from .renderer import NeRFRenderer
 
+from modules.models import get_INR
+
 
 class NeRFNetwork(NeRFRenderer):
     def __init__(self,
+                 nonlin,
                  encoding="hashgrid",
                  encoding_dir="sphere_harmonics",
                  encoding_bg="hashgrid",
@@ -47,25 +50,36 @@ class NeRFNetwork(NeRFRenderer):
         self.sigma_net = nn.ModuleList(sigma_net)
 
         # color network
-        self.num_layers_color = num_layers_color        
-        self.hidden_dim_color = hidden_dim_color
-        self.encoder_dir, self.in_dim_dir = get_encoder(encoding_dir)
-        
-        color_net =  []
-        for l in range(num_layers_color):
-            if l == 0:
-                in_dim = self.in_dim_dir + self.geo_feat_dim
-            else:
-                in_dim = hidden_dim_color
-            
-            if l == num_layers_color - 1:
-                out_dim = 3 # 3 rgb
-            else:
-                out_dim = hidden_dim_color
-            
-            color_net.append(nn.Linear(in_dim, out_dim, bias=False))
 
-        self.color_net = nn.ModuleList(color_net)
+        # self.num_layers_color = num_layers_color
+        # self.hidden_dim_color = hidden_dim_color
+        self.encoder_dir, self.in_dim_dir = get_encoder(encoding_dir) # ?
+        
+        # color_net =  []
+        # for l in range(num_layers_color):
+        #     if l == 0:
+        #         in_dim = self.in_dim_dir + self.geo_feat_dim
+        #     else:
+        #         in_dim = hidden_dim_color
+            
+        #     if l == num_layers_color - 1:
+        #         out_dim = 3 # 3 rgb
+        #     else:
+        #         out_dim = hidden_dim_color
+            
+        #     color_net.append(nn.Linear(in_dim, out_dim, bias=False))
+
+        # self.color_net = nn.ModuleList(color_net)
+
+        self.color_net = get_INR(
+            nonlin,
+            in_features=self.in_dim_dir + self.geo_feat_dim,
+            out_features=3, 
+            hidden_features=hidden_dim_color,
+            hidden_layers=num_layers_color,
+            first_omega_0=30.0,
+            hidden_omega_0=30.0
+        )
 
         # background network
         if self.bg_radius > 0:
@@ -110,13 +124,14 @@ class NeRFNetwork(NeRFRenderer):
         geo_feat = h[..., 1:]
 
         # color
-        
         d = self.encoder_dir(d)
         h = torch.cat([d, geo_feat], dim=-1)
-        for l in range(self.num_layers_color):
-            h = self.color_net[l](h)
-            if l != self.num_layers_color - 1:
-                h = F.relu(h, inplace=True)
+        # for l in range(self.num_layers_color):
+        #     h = self.color_net[l](h)
+        #     if l != self.num_layers_color - 1:
+        #         h = F.relu(h, inplace=True)
+
+        h = self.color_net(h)
         
         # sigmoid activation for rgb
         color = torch.sigmoid(h)
